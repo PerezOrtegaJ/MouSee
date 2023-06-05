@@ -33,6 +33,7 @@ classdef MouSee < matlab.apps.AppBase
         DirectionsDropDown              matlab.ui.control.DropDown
         DirectionsDropDownLabel         matlab.ui.control.Label
         ActivatestimulationwindowPanel  matlab.ui.container.Panel
+        ScreenSizeLabel                 matlab.ui.control.Label
         DefaultscreenDropDown           matlab.ui.control.DropDown
         DefaultscreenDropDownLabel      matlab.ui.control.Label
         SelectscreenLabel               matlab.ui.control.Label
@@ -56,7 +57,6 @@ classdef MouSee < matlab.apps.AppBase
         half_height_w = 0;
         gray = 128;
         increment = 128;
-        stim_degrees = [180 135 90 45 0 315 270 225];
         real_degrees = [0 45 90 135 180 225 270 315];
         num_stim = 8;
         grating_pixels = 200;
@@ -68,6 +68,10 @@ classdef MouSee < matlab.apps.AppBase
         rand_stim = true;
         sinusoidal = true;
         output_stims = false;
+        rotating = false;
+        rotation_angles = [];
+        workspace_stim = false;
+        workspace_data = [];
         
         % textures
         tex = [];
@@ -217,6 +221,8 @@ classdef MouSee < matlab.apps.AppBase
                 Screen('FillRect',app.window,app.default_screen);
             elseif strfind(app.DefaultscreenDropDown.Value,'º')
                 Screen('DrawTexture',app.window,app.static_gratings);
+            else
+                Screen('DrawTexture',app.window,app.default_screen);
             end
             Screen('Flip',app.window);
             if app.output_stims
@@ -230,6 +236,72 @@ classdef MouSee < matlab.apps.AppBase
             app.GratingsconfigurationPanel.Enable = 'on';
             app.DurationPanel.Enable = 'on';
             app.ActivatestimulationwindowPanel.Enable = 'on';
+        end
+        
+        function [tex,movie_frames,movie_IDs,image,rotation_angles] = GetTextureRotating(app,angle,clockwise)
+            rotation_angle = app.FrequencyHzEditField.Value;
+
+            % Run the movie animation for a fixed period
+            fpsScreen = Screen('FrameRate',app.screen_number);
+            if ~fpsScreen
+                fpsScreen = 60;
+            end
+                    
+            % Get number of frames and spatial frequency
+            period_rotation = app.StimulusEditField.Value;
+            frequency_rotation = 1/period_rotation;
+            n_frames = round(fpsScreen/frequency_rotation);
+            spatial_frequency = app.SizeEditField.Value/(2*pi);
+
+            % Set initial and final angle
+            ini_angle_rad = angle*pi/180;
+            if clockwise
+                fin_angle_rad = (angle+rotation_angle)*pi/180;
+            else
+                fin_angle_rad = (angle-rotation_angle)*pi/180;
+            end
+            step = (fin_angle_rad-ini_angle_rad)/n_frames;
+            rotation_angle_rad = ini_angle_rad:step:fin_angle_rad;
+            rotation_angles = rotation_angle_rad*180/pi;
+
+            % Convert movie duration in seconds to duration in frames to draw:
+            movie_frames = round(period_rotation*fpsScreen);
+            movie_IDs = mod(0:(movie_frames-1),n_frames)+1;
+                    
+            % Compute each frame of the movie
+            tex = zeros(1,n_frames);
+            for i = 1:n_frames
+                % generate grating frame
+                [x,y] = meshgrid(-app.half_width_w:app.half_width_w,...
+                    -app.half_height_w:app.half_height_w);
+                a = cos(rotation_angle_rad(i))/spatial_frequency;
+                b = sin(rotation_angle_rad(i))/spatial_frequency;
+                
+                % get sinusoidal or square gratings
+                if app.sinusoidal
+                    m = sin(a*x+b*y);
+                else
+                    m = sign(sin(a*x+b*y));
+                end
+                if i==1
+                    image = mat2gray(repmat(round(app.gray+app.increment*m),1,1,3));
+                end
+                tex(i) = Screen('MakeTexture',app.window,round(app.gray+app.increment*m));
+            end
+        end
+        
+        function [tex,image] = GetWorkspaceImage(app,index)
+            % Set the angle
+            if length(size(app.workspace_data))==3
+                mat = repmat(app.workspace_data(:,:,index),1,1,3);
+                mat = imresize(mat,[app.half_height_w*2 app.half_width_w*2]);
+                image = mat2gray(mat);
+            elseif length(size(app.workspace_data))==4
+                mat = app.workspace_data(:,:,:,index);
+                mat = imresize(mat,[app.half_height_w*2 app.half_width_w*2]);
+                image = mat2gray(mat);
+            end
+            tex = Screen('MakeTexture',app.window,mat);
         end
     end
     
@@ -263,7 +335,6 @@ classdef MouSee < matlab.apps.AppBase
                 Priority(priorityLevel);
                 
                 % Start the stimuli generation
-                stimSequence = [];
                 app.cancel = false;
                 nTrials = 1;
                 tic
@@ -302,7 +373,49 @@ classdef MouSee < matlab.apps.AppBase
                         % Plot next gratings 
                         app.PreviewImage.ImageSource = app.image{stim};
 
-                        if app.DriftingCheckBox.Value
+                        % Rotating gratings
+                        if app.rotating
+                            % Plot angle
+                            app.DirectionLabel.Text = [num2str(real_angle) '° ' app.DirectionsDropDown.Value(1)];
+                            drawnow
+                            
+                            % Plot movie gratings
+                            for i = 1:app.movie_frames{stim}
+                                if app.cancel
+                                    Canceling(app)
+                                    return;
+                                end
+                                
+                                % Draw image
+                                id = app.movie_IDs{stim};
+                                tex_i = app.tex{stim};
+                                Screen('DrawTexture',app.window,tex_i(id(i)));
+                                Screen('Flip',app.window);
+                                
+                                if app.output_stims
+                                    % 0deg = 0.5V, 45deg = 1V, ..., 315deg = 4V
+                                    app.ni.write(mod(app.rotation_angles{stim}(i),360)/90+0.5);
+                                end
+                            end
+                        elseif app.workspace_stim
+                            % Static gratings
+                            % Plot angle
+                            app.DirectionLabel.Text = ['image ' num2str(stim)];
+                            drawnow
+                            
+                            % Draw static image
+                            tex_i = app.tex{stim};
+                            Screen('DrawTexture',app.window,tex_i);
+                            Screen('Flip',app.window);
+                            
+                            if app.output_stims
+                                % 0deg = 0.5V, 45deg = 1V, ..., 315deg = 4V
+                                app.ni.write(real_angle/90+0.5);
+                            end
+                            pause(app.StimulusEditField.Value)
+
+                        elseif app.DriftingCheckBox.Value
+                            % Drifitng gratings
                             % Plot direction and angle
                             app.DirectionLabel.Text = [app.DirectionsLabel.Text(stim) newline...
                                 num2str(real_angle) '°'];
@@ -327,6 +440,7 @@ classdef MouSee < matlab.apps.AppBase
                                 end
                             end
                         else
+                            % Static gratings
                             % Plot angle
                             app.DirectionLabel.Text = [num2str(real_angle) '°'];
                             drawnow
@@ -417,6 +531,7 @@ classdef MouSee < matlab.apps.AppBase
                     app.MonitorDropDown.Enable = false;
                     app.GenerategratingsButton.Enable = true;
                     app.DefaultscreenDropDown.Enable = true;
+                    app.ScreenSizeLabel.Text = ['screen size: ' num2str(rect(3)) 'x' num2str(rect(4))];
                 catch
                     % Close window:
                     Priority(0);
@@ -437,6 +552,7 @@ classdef MouSee < matlab.apps.AppBase
                 
                 % Change property values
                 app.WindowLamp.Color = [0.5,0.5,0.5];
+                app.ScreenSizeLabel.Text = 'screen size: ----x----';
                 app.GenerategratingsButton.Text = 'Generate gratings';
                 app.GenerategratingsButton.BackgroundColor = [0.95 0.95 0.95];
                 app.GenerategratingsButton.Enable = false;
@@ -452,59 +568,74 @@ classdef MouSee < matlab.apps.AppBase
         function DirectionsDropDownValueChanged(app, event)
             value = app.DirectionsDropDown.Value;
             app.DirectionsLabel.Text = value;
-            switch value
-                case '→↗↑↖←↙↓↘'
-                    app.stim_degrees = [180 135 90 45 0 315 270 225];
-                    app.real_degrees = [0 45 90 135 180 225 270 315];
-                case '→↗↑↖'
-                    app.stim_degrees = [180 135 90 45];
-                    app.real_degrees = [0 45 90 135];
-                case '←↙↓↘'
-                    app.stim_degrees = [0 315 270 225];
-                    app.real_degrees = [180 225 270 315];
-                case '→↑←↓'
-                    app.stim_degrees = [180 90 0 270];
-                    app.real_degrees = [0 90 180 270];
-                case '→↑'
-                    app.stim_degrees = [180 90];
-                    app.real_degrees = [0 90];
-                case '←↓'
-                    app.stim_degrees = [0 270];
-                    app.real_degrees = [180 270];
-                case '↗↖'
-                    app.stim_degrees = [135 45];
-                    app.real_degrees = [45 135];
-                case '↙↘'
-                    app.stim_degrees = [315 225];
-                    app.real_degrees = [225 315];
-                case '→'
-                    app.stim_degrees = 180;
-                    app.real_degrees = 0;
-                case '↗'
-                    app.stim_degrees = 135;
-                    app.real_degrees = 45;
-                case '↑'
-                    app.stim_degrees = 90;
-                    app.real_degrees = 90;
-                case '↖'
-                    app.stim_degrees = 45;
-                    app.real_degrees = 135;
-                case '←'
-                    app.stim_degrees = 0;
-                    app.real_degrees = 180;
-                case '↙'
-                    app.stim_degrees = 315;
-                    app.real_degrees = 225;
-                case '↓'
-                    app.stim_degrees = 270;
-                    app.real_degrees = 270;
-                case '↘'
-                    app.stim_degrees = 225;
-                    app.real_degrees = 315;
+            app.DirectionsDropDown.BackgroundColor = [0.96 0.96 0.96];
+            if value(1)=='↻'||value(1)=='↺'
+                % Enable/disable controls
+                app.SizeEditField.Enable = 'on';
+                app.DriftingCheckBox.Enable = 'off';
+                app.FrequencyHzEditField.Enable = 'on';
+                app.SinusoidalCheckBox.Enable = 'on';
+
+                % Set properties
+                app.FrequencyHzEditFieldLabel.Text = 'Rotation (º):';
+                app.FrequencyHzEditField.Value = 180;
+                app.rotating = true;
+                app.workspace_stim = false;
+                value = value(2:end);
+            elseif value(1)=='→'||value(1)=='↗'||value(1)=='↑'||value(1)=='↖'||...
+                   value(1)=='←'||value(1)=='↙'||value(1)=='↓'||value(1)=='↘'
+                % Enable/disable controls
+                app.SizeEditField.Enable = 'on';
+                app.DriftingCheckBox.Enable = 'on';
+                app.SinusoidalCheckBox.Enable = 'on';
+                if ~app.DriftingCheckBox.Value
+                    app.FrequencyHzEditField.Enable = 'off';
+                end
+
+                % Set properties
+                app.FrequencyHzEditFieldLabel.Text = 'Frequency (Hz):';
+                app.FrequencyHzEditField.Value = 2;
+                app.rotating = false;
+                app.workspace_stim = false;
+            else
+                % Enable/disable controls
+                app.SizeEditField.Enable = 'off';
+                app.DriftingCheckBox.Enable = 'off';
+                app.FrequencyHzEditField.Enable = 'off';
+                app.SinusoidalCheckBox.Enable = 'off';
+
+                % Set properties
+                app.rotating = false;
+                app.workspace_stim = true;
             end
-            app.num_stim = length(app.stim_degrees);
+
+            if app.workspace_stim
+                % Check if variable exist
+                if evalin('base',['exist(''' value ''',''var'')'])
+                    app.workspace_data = evalin('base',value);
+                    if length(size(app.workspace_data))==3
+                        app.num_stim = size(app.workspace_data,3);
+                    elseif length(size(app.workspace_data))==4
+                        app.num_stim = size(app.workspace_data,4);
+                    end
+                    app.real_degrees = (1:app.num_stim)*360/app.num_stim;
+                    app.DirectionsDropDown.BackgroundColor = [0 1 0];
+                else
+                    app.num_stim = 0;
+                    app.DirectionsDropDown.BackgroundColor = [1 0 0];
+                end
+            else
+                real_deg = [0 45 90 135 180 225 270 315];
+                arrows = '→↗↑↖←↙↓↘';
+                app.real_degrees = [];
+                for i = 1:8
+                    if contains(value,arrows(i))
+                        app.real_degrees(end+1) = real_deg(i);
+                    end
+                end
+                app.num_stim = length(app.real_degrees);
+            end            
             ComputeFinalTime(app)
-            
         end
 
         % Value changed function: SizeEditField
@@ -545,7 +676,6 @@ classdef MouSee < matlab.apps.AppBase
         % Value changed function: OutputDropDown
         function OutputDropDownValueChanged(app, event)
             value = app.OutputDropDown.Value;
-            
             if strcmp(value,'None')
                 app.output_stims = false;
                 app.OutputDropDown.BackgroundColor = [0.96 0.96 0.96];
@@ -632,7 +762,18 @@ classdef MouSee < matlab.apps.AppBase
             value = app.GenerategratingsButton.Value;
             if value
                 for i = 1:app.num_stim
-                    if app.DriftingCheckBox.Value
+                    % Rotating gratings
+                    if app.workspace_stim
+                        [app.tex{i},app.image{i}] = GetWorkspaceImage(app,i);
+                    elseif app.DirectionsDropDown.Value(1)=='↺'
+                        [app.tex{i},app.movie_frames{i},app.movie_IDs{i},app.image{i},...
+                            app.rotation_angles{i}] = ...
+                            GetTextureRotating(app,app.real_degrees(i),false);
+                    elseif app.DirectionsDropDown.Value(1)=='↻'
+                        [app.tex{i},app.movie_frames{i},app.movie_IDs{i},app.image{i},...
+                            app.rotation_angles{i}] = ...
+                            GetTextureRotating(app,app.real_degrees(i),true);
+                    elseif app.DriftingCheckBox.Value
                         [app.tex{i},app.movie_frames{i},app.movie_IDs{i},app.image{i}] = ...
                             GetTextureDrifting(app,app.real_degrees(i));
                     else
@@ -649,6 +790,7 @@ classdef MouSee < matlab.apps.AppBase
         % Value changed function: DefaultscreenDropDown
         function DefaultscreenDropDownValueChanged(app, event)
             value = app.DefaultscreenDropDown.Value;
+            app.DefaultscreenDropDown.BackgroundColor = [0.96 0.96 0.96];
             switch value
                 case {'0% - black','10% - gray','20% - gray','30% - gray','40% - gray',...
                       '50% - gray','60% - gray','70% - gray','80% - gray','90% - gray',...
@@ -680,8 +822,41 @@ classdef MouSee < matlab.apps.AppBase
                        app.default_screen = 128;
                        app.DefaultscreenDropDown.Value = 6;
                     end
+                otherwise
+                    if evalin('base',['exist(''' value ''',''var'')'])
+                        app.default_screen = evalin('base',value);
+                        if length(size(app.default_screen))==2
+                            app.default_screen = repmat(app.default_screen,1,1,3);
+                        end
+                        Screen('DrawTexture',app.window,app.default_screen);
+                        Screen('Flip',app.window);
+                        app.DefaultscreenDropDown.BackgroundColor = [0 1 0];
+                    else
+                        app.DefaultscreenDropDown.BackgroundColor = [1 0 0];
+                    end
+
             end
             Set_Default_Screen(app)
+        end
+
+        % Drop down opening function: DirectionsDropDown
+        function DirectionsDropDownOpening(app, event)
+            basic_items = {'→↗↑↖←↙↓↘','→↗↑↖','←↙↓↘','→↑←↓','→↑','←↓','↗↖','↙↘',...
+                           '→','↗','↑','↖','←','↙','↓','↘',...
+                           '↻→↗↑↖','↻→↑','↻↗↖','↻→','↻↗','↻↑','↻↖',...
+                           '↺→↗↑↖','↺→↑','↺↗↖','↺→','↺↗','↺↑','↺↖'};
+            data_strings = evalin('base','who');
+            app.DirectionsDropDown.Items = [basic_items data_strings'];
+        end
+
+        % Drop down opening function: DefaultscreenDropDown
+        function DefaultscreenDropDownOpening(app, event)
+            basic_items = {'0% - black','10% - gray','20% - gray','30% - gray','40% - gray',...
+                           '50% - gray','60% - gray','70% - gray','80% - gray','90% - gray',...
+                           '100% - white','0º - gratings','45º - gratings','90º - gratings',...
+                           '135º - gratings'};
+            data_strings = evalin('base','who');
+            app.DirectionsDropDown.Items = [basic_items data_strings'];
         end
     end
 
@@ -721,7 +896,7 @@ classdef MouSee < matlab.apps.AppBase
             app.StimulationWindowSwitch = uiswitch(app.ActivatestimulationwindowPanel, 'rocker');
             app.StimulationWindowSwitch.Orientation = 'horizontal';
             app.StimulationWindowSwitch.ValueChangedFcn = createCallbackFcn(app, @StimulationWindowSwitchValueChanged, true);
-            app.StimulationWindowSwitch.Position = [49 52 45 20];
+            app.StimulationWindowSwitch.Position = [51 62 45 20];
 
             % Create WindowLamp
             app.WindowLamp = uilamp(app.ActivatestimulationwindowPanel);
@@ -742,10 +917,18 @@ classdef MouSee < matlab.apps.AppBase
             % Create DefaultscreenDropDown
             app.DefaultscreenDropDown = uidropdown(app.ActivatestimulationwindowPanel);
             app.DefaultscreenDropDown.Items = {'0% - black', '10% - gray', '20% - gray', '30% - gray', '40% - gray', '50% - gray', '60% - gray', '70% - gray', '80% - gray', '90% - gray', '100% - white', '0º - gratings', '45º - gratings', '90º - gratings', '135º - gratings'};
+            app.DefaultscreenDropDown.DropDownOpeningFcn = createCallbackFcn(app, @DefaultscreenDropDownOpening, true);
             app.DefaultscreenDropDown.ValueChangedFcn = createCallbackFcn(app, @DefaultscreenDropDownValueChanged, true);
             app.DefaultscreenDropDown.Enable = 'off';
             app.DefaultscreenDropDown.Position = [103 10 104 22];
             app.DefaultscreenDropDown.Value = '50% - gray';
+
+            % Create ScreenSizeLabel
+            app.ScreenSizeLabel = uilabel(app.ActivatestimulationwindowPanel);
+            app.ScreenSizeLabel.HorizontalAlignment = 'center';
+            app.ScreenSizeLabel.FontColor = [0.651 0.651 0.651];
+            app.ScreenSizeLabel.Position = [2 38 143 22];
+            app.ScreenSizeLabel.Text = 'screen size: ----x----';
 
             % Create GratingsconfigurationPanel
             app.GratingsconfigurationPanel = uipanel(app.MouSeeUIFigure);
@@ -760,14 +943,15 @@ classdef MouSee < matlab.apps.AppBase
 
             % Create DirectionsDropDown
             app.DirectionsDropDown = uidropdown(app.GratingsconfigurationPanel);
-            app.DirectionsDropDown.Items = {'→↗↑↖←↙↓↘', '→↗↑↖', '←↙↓↘', '→↑←↓', '→↑', '←↓', '↗↖', '↙↘', '→', '↗', '↑', '↖', '←', '↙', '↓', '↘'};
+            app.DirectionsDropDown.Items = {'→↗↑↖←↙↓↘', '→↗↑↖', '←↙↓↘', '→↑←↓', '→↑', '←↓', '↗↖', '↙↘', '→', '↗', '↑', '↖', '←', '↙', '↓', '↘', '↻→↗↑↖', '↻→↑', '↻↗↖', '↻→', '↻↗', '↻↑', '↻↖', '↺→↗↑↖', '↺→↑', '↺↗↖', '↺→', '↺↗', '↺↑', '↺↖'};
+            app.DirectionsDropDown.DropDownOpeningFcn = createCallbackFcn(app, @DirectionsDropDownOpening, true);
             app.DirectionsDropDown.ValueChangedFcn = createCallbackFcn(app, @DirectionsDropDownValueChanged, true);
             app.DirectionsDropDown.Position = [77 167 129 22];
             app.DirectionsDropDown.Value = '→↗↑↖←↙↓↘';
 
             % Create SizeEditField
             app.SizeEditField = uieditfield(app.GratingsconfigurationPanel, 'numeric');
-            app.SizeEditField.Limits = [5 1000];
+            app.SizeEditField.Limits = [1 4000];
             app.SizeEditField.RoundFractionalValues = 'on';
             app.SizeEditField.ValueChangedFcn = createCallbackFcn(app, @SizeEditFieldValueChanged, true);
             app.SizeEditField.Position = [133 140 73 22];
@@ -782,7 +966,7 @@ classdef MouSee < matlab.apps.AppBase
 
             % Create FrequencyHzEditField
             app.FrequencyHzEditField = uieditfield(app.GratingsconfigurationPanel, 'numeric');
-            app.FrequencyHzEditField.Limits = [0.1 100];
+            app.FrequencyHzEditField.Limits = [0.001 Inf];
             app.FrequencyHzEditField.ValueChangedFcn = createCallbackFcn(app, @FrequencyHzEditFieldValueChanged, true);
             app.FrequencyHzEditField.Position = [133 86 73 22];
             app.FrequencyHzEditField.Value = 2;
@@ -791,7 +975,7 @@ classdef MouSee < matlab.apps.AppBase
             app.RandomCheckBox = uicheckbox(app.GratingsconfigurationPanel);
             app.RandomCheckBox.ValueChangedFcn = createCallbackFcn(app, @RandomCheckBoxValueChanged, true);
             app.RandomCheckBox.Text = 'Random sequence';
-            app.RandomCheckBox.Position = [7 59 189 22];
+            app.RandomCheckBox.Position = [7 33 189 22];
             app.RandomCheckBox.Value = true;
 
             % Create GratingssizepixelsLabel
@@ -801,14 +985,14 @@ classdef MouSee < matlab.apps.AppBase
 
             % Create FrequencyHzEditFieldLabel
             app.FrequencyHzEditFieldLabel = uilabel(app.GratingsconfigurationPanel);
-            app.FrequencyHzEditFieldLabel.Position = [27 86 89 22];
+            app.FrequencyHzEditFieldLabel.Position = [23 86 103 22];
             app.FrequencyHzEditFieldLabel.Text = 'Frequency (Hz):';
 
             % Create SinusoidalCheckBox
             app.SinusoidalCheckBox = uicheckbox(app.GratingsconfigurationPanel);
             app.SinusoidalCheckBox.ValueChangedFcn = createCallbackFcn(app, @SinusoidalCheckBoxValueChanged, true);
             app.SinusoidalCheckBox.Text = 'Sinusoidal';
-            app.SinusoidalCheckBox.Position = [7 33 78 22];
+            app.SinusoidalCheckBox.Position = [7 59 78 22];
             app.SinusoidalCheckBox.Value = true;
 
             % Create OutputvoltageDropDownLabel
