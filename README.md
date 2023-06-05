@@ -24,7 +24,7 @@ Note: in our projects where we use black/blue stimuli, we turn off the channels 
 If you use **_MouSee_**, please cite our [paper](https://elifesciences.org/articles/64449):
 > Pérez-Ortega J, Alejandre-García T, Yuste R. 2021. Long-term stability of cortical ensembles. Elife 10:1–19. doi:10.7554/eLife.64449
 
-# Mousee GUI
+# GUI
 This is an example of the graphical user interface during visual stimulation.
 
 <img src="Images/MouSee.png" width=50% height=50%>
