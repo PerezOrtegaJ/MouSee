@@ -21,7 +21,9 @@ You need a NI-DAQ to send an analog output to record the type and time of visual
 Note: in our projects where we use black/blue stimuli, we turn off the channels red and green directly from the stimulation monitor.
 
 ## Citation
-If you use **_MouSee_**, please cite our [paper](https://elifesciences.org/articles/64449):
+If you use **_MouSee_**, please cite our papers [NatComms](https://www.nature.com/articles/s41467-024-47515-x) and/or [eLife](https://elifesciences.org/articles/64449):
+> Pérez-Ortega, J., Akrouh, A. & Yuste, R. 2024. Stimulus encoding by specific inactivation of cortical neurons. Nat Commun 15, 3192. doi: 10.1038/s41467-024-47515-x
+
 > Pérez-Ortega J, Alejandre-García T, Yuste R. 2021. Long-term stability of cortical ensembles. Elife 10:1–19. doi:10.7554/eLife.64449
 
 # GUI
